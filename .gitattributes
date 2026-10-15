@@ -1,0 +1,2 @@
+# Generated bundles and copied notices retain upstream whitespace.
+plugins/*/dist/** linguist-generated=true -whitespace

@@ -1,0 +1,14 @@
+node_modules/
+dist/*
+!dist/monaco/
+*.tgz
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+coverage/
+scratch/
+__scratch__/
+*.scratch.*
+*scratch*.config.ts

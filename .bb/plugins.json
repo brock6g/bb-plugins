@@ -1,0 +1,11 @@
+{
+  "$schema": "https://getbb.app/schemas/plugins.schema.json",
+  "schemaVersion": 1,
+  "name": "brock6g-bb-plugins",
+  "plugins": [
+    {
+      "name": "files-editor",
+      "source": "./plugins/files-editor"
+    }
+  ]
+}
