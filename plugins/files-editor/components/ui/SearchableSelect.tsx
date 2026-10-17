@@ -129,7 +129,7 @@ export function SearchableSelect({
             maxHeight: "min(20rem, var(--radix-popover-content-available-height))",
           }}
         >
-          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-2">
+          <div className="flex min-h-8 shrink-0 items-center gap-2 border-b border-border px-2">
             <Icon name="Search" aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <input
               ref={inputRef}
@@ -144,6 +144,7 @@ export function SearchableSelect({
               spellCheck={false}
               value={query}
               placeholder={`Search ${label.toLocaleLowerCase()}…`}
+              style={{ height: "var(--radix-popover-trigger-height)" }}
               onChange={(event) => {
                 setQuery(event.target.value);
                 setActiveValue(null);
@@ -169,7 +170,7 @@ export function SearchableSelect({
                   : (activeIndex + (event.key === "ArrowDown" ? 1 : -1) + filtered.length) % filtered.length;
                 setActiveValue(filtered[nextIndex]?.value ?? null);
               }}
-              className="min-h-11 w-full min-w-0 rounded-sm bg-transparent py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none [@media(pointer:coarse)]:text-base"
+              className="min-h-8 w-full min-w-0 rounded-sm bg-transparent py-1 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none [@media(pointer:coarse)]:text-base"
             />
           </div>
           <div id={listId} role="listbox" aria-label={label} className="min-h-0 overflow-y-auto overscroll-contain p-1">

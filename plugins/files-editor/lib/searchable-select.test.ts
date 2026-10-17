@@ -60,6 +60,12 @@ describe("searchable select", () => {
     expect(screen.queryByRole("listbox")).toBeNull();
   });
 
+  it("matches search height to the dropdown trigger", () => {
+    render(createElement(SearchableSelect, { label: "Project", value: "a", options, onSelect: vi.fn() }));
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+    expect((screen.getByRole("combobox") as HTMLInputElement).style.height).toBe("var(--radix-popover-trigger-height)");
+  });
+
   it("supports arrows, Home and End while keeping focus in the search input", () => {
     const onSelect = vi.fn();
     render(createElement(SearchableSelect, { label: "Workspace", value: "a", options, onSelect }));
