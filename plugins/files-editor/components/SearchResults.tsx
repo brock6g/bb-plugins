@@ -13,6 +13,7 @@ const DEBOUNCE_MS = 180;
 export interface SearchResultsProps {
   scope: ScopeRef;
   query: string;
+  paths?: string[];
   matchCase: boolean;
   wholeWord: boolean;
   regex: boolean;
@@ -30,6 +31,7 @@ export interface SearchResultsProps {
 export function SearchResults({
   scope,
   query,
+  paths,
   matchCase,
   wholeWord,
   regex,
@@ -64,6 +66,7 @@ export function SearchResults({
             wholeWord,
             regex,
             includeHidden,
+            ...(paths === undefined ? {} : { paths }),
           })
           .then((next) => {
             if (request !== generation.current) return;
@@ -85,7 +88,7 @@ export function SearchResults({
       immediate ? 0 : DEBOUNCE_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [includeHidden, matchCase, query, regex, rpc, scopeId, scopeKind, submitNonce, wholeWord]);
+  }, [includeHidden, matchCase, paths, query, regex, rpc, scopeId, scopeKind, submitNonce, wholeWord]);
 
   const files = result?.status === "ok" ? result.files : [];
   const allCollapsed = files.length > 0 && files.every((file) => collapsed.has(file.path));

@@ -2,6 +2,7 @@
 
 Edit the files behind a BB thread without leaving BB. Files opens text directly
 in Monaco, with a Pierre file tree, editor tabs, project search, and conflict diffs.
+You can also open folders on a connected machine, including its filesystem root.
 
 Forked from [AbdElrahman Telb’s Files plugin](https://github.com/abdoutelb/bb-plugin-files-editor).
 The original [MIT license and copyright](LICENSE) are preserved.
@@ -50,6 +51,22 @@ the current draft. Images up to 2 MB open as previews; other binary files show t
 
 The active text file is checked for changes every three seconds while Files is
 visible, and when you return to the window. Unsaved drafts are preserved.
+
+## Open a server folder
+
+On the sidebar **Files** page, select **Open folder on a machine** beside the
+project and workspace pickers. Choose a machine, enter an absolute path, and
+select **Open folder**. Use `/` for a Linux or macOS filesystem root, or a path
+such as `C:\Users` on Windows.
+
+Directories load as you expand them. **Search loaded files** and **Go to file**
+cover files in folders you have loaded, so opening `/` does not scan the entire
+disk. **Refresh files** refreshes the root and folders you have already loaded.
+File saves keep the same conflict checks as project files.
+
+The Project and Workspace pickers have searchable, scrollable menus that stay
+inside the viewport. Use the arrow keys to move through results, **Enter** to
+select, and **Escape** to close. Long project and branch names wrap in the menu.
 
 ## Use keyboard shortcuts
 
@@ -119,7 +136,8 @@ assets whenever the editor bundle changes. Other build output stays untracked.
 - Files larger than 4 MB open read-only. Markdown preview is limited to about
   one million characters.
 - The tree lists up to 40,000 entries locally or 10,000 on connected machines.
-  Connected-machine listings cannot include dotfiles.
+  Connected-machine listings cannot include dotfiles. Server-folder views keep
+  at most 40,000 loaded entries; excluded directories still apply.
 - Search skips binaries and files larger than 2 MB. It stops at 2,000 matches,
   500 matching files, or ten seconds. Connected-machine search covers up to
   3,000 files. A regular expression that exceeds three seconds is stopped.

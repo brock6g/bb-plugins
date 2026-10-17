@@ -2,22 +2,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   useBbNavigate,
   useRealtime,
-  useRpc,
 } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { Icon } from "@/components/ui/icon";
 import { cn, formatHomePathForDisplay } from "@/lib/utils";
-import type { FlatEntry } from "@/lib/tree";
 import type { ScopeRef } from "@/lib/route";
 import { sameScope } from "@/lib/route";
 import { isMarkdownPath } from "@/lib/markdown";
-import type { ResolvedScope, rpcContract } from "../server.js";
 import { Explorer } from "./Explorer";
 import { EditorTabs } from "./EditorTabs";
 import { FileView, fileMetaLabel } from "./FileView";
 import { MonacoDocuments } from "./MonacoEditor";
 import { QuickOpen } from "./QuickOpen";
 import { WorkspacePicker } from "./WorkspacePicker";
+import { useWorkspaceTree } from "./use-workspace-tree";
+import { FolderPicker } from "./FolderPicker";
 import {
   canPreview,
   isDirty,
@@ -25,26 +24,6 @@ import {
   type FileTab,
   type FileViewMode,
 } from "./use-file-tabs";
-
-interface TreeState {
-  status: "idle" | "loading" | "ready" | "error";
-  scope: ResolvedScope | null;
-  entries: FlatEntry[];
-  truncated: boolean;
-  listing: "local" | "remote";
-  excluded: string[];
-  error: string | null;
-}
-
-const EMPTY_TREE: TreeState = {
-  status: "idle",
-  scope: null,
-  entries: [],
-  truncated: false,
-  listing: "local",
-  excluded: [],
-  error: null,
-};
 
 const MIN_EXPLORER_PX = 180;
 const MAX_EXPLORER_PX = 560;
@@ -68,12 +47,12 @@ export function Workspace({
   onOpenPath,
   onChangeScope,
 }: WorkspaceProps) {
-  const rpc = useRpc<typeof rpcContract>();
   const navigate = useBbNavigate();
   const tabs = useFileTabs(scope);
 
-  const [tree, setTree] = useState<TreeState>(EMPTY_TREE);
   const [includeHidden, setIncludeHidden] = useState(readStoredHidden);
+  const { tree, reload, loadDirectory, directoryLoads } = useWorkspaceTree(scope, includeHidden);
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
   const [explorerWidth, setExplorerWidth] = useState(readStoredWidth);
   // Both surfaces open on the tree — that is what you came for. The narrow
   // panel then collapses it once you pick a file, to give the editor the width.
@@ -92,7 +71,6 @@ export function Workspace({
   );
 
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const requestRef = useRef(0);
   // A toast action outlives the render that created it; navigation has to be
   // read live rather than captured.
   const onOpenPathRef = useRef(onOpenPath);
@@ -124,7 +102,7 @@ export function Workspace({
   useEffect(() => {
     if (!isCompact || !isExplorerOpen) return;
     const frame = requestAnimationFrame(() => {
-      const selector = searchFocusRequest > 0 ? '[aria-label="Search in files"]' : '[aria-label="Close the file explorer"]';
+      const selector = searchFocusRequest > 0 ? '[aria-label="Search in files"], [aria-label="Search loaded files"]' : '[aria-label="Close the file explorer"]';
       rootRef.current?.querySelector<HTMLElement>(selector)?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
@@ -138,55 +116,8 @@ export function Workspace({
     root.focus({ preventScroll: true });
   }, []);
 
-  const loadTree = useCallback(
-    (target: ScopeRef | null, hidden: boolean) => {
-      if (target === null) {
-        setTree(EMPTY_TREE);
-        return;
-      }
-      const generation = (requestRef.current += 1);
-      setTree((current) => ({ ...current, status: "loading", error: null }));
-
-      void rpc
-        .call("tree", { scope: target, includeHidden: hidden })
-        .then((result) => {
-          if (requestRef.current !== generation) return;
-          setTree({
-            status: "ready",
-            scope: result.scope,
-            entries: result.entries,
-            truncated: result.truncated,
-            listing: result.listing,
-            excluded: result.excluded,
-            error: null,
-          });
-        })
-        .catch((error: unknown) => {
-          if (requestRef.current !== generation) return;
-          setTree({
-            ...EMPTY_TREE,
-            status: "error",
-            error:
-              error instanceof Error
-                ? error.message
-                : "Could not read this workspace.",
-          });
-        });
-    },
-    [rpc],
-  );
-
-  // Keyed on the scope's VALUE, not the object: callers build the ref during
-  // render, so a fresh identity every render would re-walk the whole workspace
-  // on every keystroke and every file click.
   const scopeKind = scope?.kind ?? null;
   const scopeId = scope?.id ?? null;
-  useEffect(() => {
-    loadTree(
-      scopeKind === null || scopeId === null ? null : { kind: scopeKind, id: scopeId },
-      includeHidden,
-    );
-  }, [includeHidden, loadTree, scopeId, scopeKind]);
 
   // Open the file named by the route: on arrival, when the route moves to
   // another file, and after a scope change cleared the tabs out from under it.
@@ -402,6 +333,20 @@ export function Workspace({
     target.addEventListener("pointerup", stop);
   };
 
+  const changeScope = useCallback((next: ScopeRef) => {
+    if (onChangeScope === undefined || sameScope(scope, next)) return;
+    const open = () => {
+      onChangeScope(next);
+      setIsQuickOpen(false);
+      setIsExplorerOpen(true);
+    };
+    if (tabs.tabs.some(isDirty)) {
+      toast.warning("Switching folders will discard unsaved changes", {
+        action: { label: "Switch anyway", onClick: open },
+      });
+    } else open();
+  }, [onChangeScope, scope, tabs.tabs]);
+
   const explorerHeader = useMemo(
     () => (
       <div className="flex shrink-0 items-center gap-1 px-2 pt-2 pb-1.5">
@@ -422,16 +367,14 @@ export function Workspace({
         ) : (
           <WorkspacePicker
             current={resolved}
-            onSelect={(next) => {
-              onChangeScope(next);
-              setIsQuickOpen(false);
-            }}
+            onSelect={changeScope}
           />
         )}
+        {onChangeScope !== undefined ? <ToolbarButton icon="FolderOpen" label="Open folder on a machine" onClick={() => setIsFolderPickerOpen(true)} /> : null}
         {isCompact ? <ToolbarButton icon="X" label="Close the file explorer" onClick={() => setIsExplorerOpen(false)} /> : null}
       </div>
     ),
-    [isCompact, onChangeScope, resolved],
+    [changeScope, isCompact, onChangeScope, resolved],
   );
 
   return (
@@ -440,6 +383,7 @@ export function Workspace({
       ref={rootRef}
       onKeyDown={onKeyDown}
       onKeyDownCapture={(event) => {
+        if (isFolderPickerOpen) return;
         if ((event.metaKey || event.ctrlKey) && ((event.key.toLowerCase() === "p" && !event.shiftKey) || (event.key.toLowerCase() === "f" && event.shiftKey))) {
           onKeyDown(event);
           event.stopPropagation();
@@ -454,6 +398,16 @@ export function Workspace({
       // nothing inside it — the tree least of all — can ever scroll.
       className="relative flex h-full min-h-0 min-w-0 flex-1 overflow-hidden bg-background focus:outline-none"
     >
+      {isFolderPickerOpen && onChangeScope !== undefined ? (
+        <FolderPicker
+          current={resolved}
+          onClose={() => setIsFolderPickerOpen(false)}
+          onSelect={(next) => {
+            setIsFolderPickerOpen(false);
+            changeScope(next);
+          }}
+        />
+      ) : null}
       {isExplorerOpen ? (
         <>
           <div
@@ -461,6 +415,7 @@ export function Workspace({
             className={cn("flex min-h-0 shrink-0 flex-col overflow-hidden bg-background", isCompact && "absolute inset-0 z-20")}
           >
             <Explorer
+              key={`${scopeKind}:${scopeId}`}
               entries={tree.entries}
               activePath={tabs.activePath}
               isLoading={tree.status === "loading"}
@@ -474,7 +429,10 @@ export function Workspace({
               }}
               onOpenFile={openFile}
               onOpenMatch={openMatch}
-              onRefresh={() => loadTree(scope, includeHidden)}
+              onRefresh={reload}
+              onExpandDirectory={scopeKind === "folder" ? loadDirectory : undefined}
+              directoryLoads={directoryLoads}
+              onRetryDirectory={(path) => loadDirectory(path, true)}
               onQuickOpen={() => setIsQuickOpen(true)}
               scope={scope}
               searchFocusRequest={searchFocusRequest}

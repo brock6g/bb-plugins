@@ -10,7 +10,9 @@
  * convention BB's own Docs plugin uses.
  */
 
-export type ScopeKind = "thread" | "environment" | "project";
+import { decodeFolderScope } from "./folder-scope.js";
+
+export type ScopeKind = "thread" | "environment" | "project" | "folder";
 
 export interface ScopeRef {
   kind: ScopeKind;
@@ -22,7 +24,7 @@ export interface Route {
   filePath: string | null;
 }
 
-const SCOPE_KINDS: readonly ScopeKind[] = ["thread", "environment", "project"];
+const SCOPE_KINDS: readonly ScopeKind[] = ["thread", "environment", "project", "folder"];
 
 function isScopeKind(value: string): value is ScopeKind {
   return (SCOPE_KINDS as readonly string[]).includes(value);
@@ -44,6 +46,9 @@ export function parseRoute(subPath: string): Route {
 
   const id = decodeSegment(segments[1]!);
   if (id === "") return { scope: null, filePath: null };
+  if (kind === "folder" && decodeFolderScope(id) === null) {
+    return { scope: null, filePath: null };
+  }
 
   const rest = segments.slice(2).map(decodeSegment).join("/");
   return {

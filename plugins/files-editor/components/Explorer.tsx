@@ -26,6 +26,9 @@ export interface ExplorerProps {
   /** Bumped by ⌘⇧F: focus the search field and select what is in it. */
   searchFocusRequest: number;
   header: React.ReactNode;
+  onExpandDirectory?: (path: string) => void;
+  directoryLoads?: readonly { path: string; status: "loading" | "error"; message?: string }[];
+  onRetryDirectory?: (path: string) => void;
 }
 
 export function Explorer({
@@ -44,6 +47,9 @@ export function Explorer({
   scope,
   searchFocusRequest,
   header,
+  onExpandDirectory,
+  directoryLoads = [],
+  onRetryDirectory,
 }: ExplorerProps) {
   // The field searches file CONTENTS across the workspace. Finding a file by
   // its name is the magnifier button (⌘P) beside it.
@@ -54,6 +60,11 @@ export function Explorer({
   const [submitNonce, setSubmitNonce] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const isFolder = scope?.kind === "folder";
+  const searchLabel = isFolder ? "Search loaded files" : "Search in files";
+  const searchPaths = useMemo(() => isFolder
+    ? entries.filter((entry) => entry.kind === "file").map((entry) => entry.path)
+    : undefined, [entries, isFolder]);
   const isSearching = query !== "" && scope !== null;
 
   useEffect(() => {
@@ -104,9 +115,9 @@ export function Explorer({
                 event.preventDefault();
               }
             }}
-            placeholder="Search in files"
-            aria-label="Search in files"
-            title="Search the text of every file (⌘⇧F)"
+            placeholder={searchLabel}
+            aria-label={searchLabel}
+            title={isFolder ? "Search files in loaded folders (⌘⇧F)" : "Search the text of every file (⌘⇧F)"}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
@@ -171,6 +182,7 @@ export function Explorer({
           submitNonce={submitNonce}
           activePath={activePath}
           onOpenMatch={onOpenMatch}
+          paths={searchPaths}
         />
       ) : null}
       <div className={cn("min-h-0 flex-1 pb-2", isSearching && "hidden")}>
@@ -180,7 +192,7 @@ export function Explorer({
           <p className="px-3 py-2 text-xs text-muted-foreground">Reading the workspace…</p>
         ) : entries.length === 0 ? (
           <p className="px-3 py-2 text-xs text-muted-foreground">
-            This workspace has no files yet.
+            {isFolder ? "This folder is empty" : "This workspace has no files yet."}
           </p>
         ) : (
           <ProjectTree
@@ -188,12 +200,25 @@ export function Explorer({
             entries={entries}
             activePath={activePath}
             onOpenFile={onOpenFile}
+            onExpandDirectory={onExpandDirectory}
           />
         )}
       </div>
 
+      {directoryLoads.length > 0 ? (
+        <div className="max-h-32 shrink-0 overflow-y-auto overscroll-contain border-t border-border px-3 py-2 text-xs">
+          {directoryLoads.map((load) => load.status === "loading" ? (
+            <p key={load.path} role="status" className="truncate text-muted-foreground" title={load.path}>Loading {load.path}…</p>
+          ) : (
+            <div key={load.path} role="alert" className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-destructive-text">
+              <span className="break-all">{load.path}: {load.message}</span>
+              <button type="button" onClick={() => onRetryDirectory?.(load.path)} className="rounded underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">Retry</button>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="shrink-0 border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
-        {`${fileCount.toLocaleString()} files`}
+        {`${fileCount.toLocaleString()} ${isFolder ? "loaded files" : "files"}`}
         {truncated ? " · listing truncated" : ""}
       </div>
     </div>

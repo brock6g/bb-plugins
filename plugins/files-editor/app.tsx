@@ -133,7 +133,7 @@ function readLastScope(): ScopeRef | null {
       "kind" in parsed &&
       "id" in parsed &&
       typeof (parsed as ScopeRef).id === "string" &&
-      ["thread", "environment", "project"].includes(String((parsed as ScopeRef).kind))
+      ["thread", "environment", "project", "folder"].includes(String((parsed as ScopeRef).kind))
     ) {
       return parsed as ScopeRef;
     }

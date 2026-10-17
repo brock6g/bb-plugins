@@ -1,6 +1,11 @@
 import { FileTree } from "@pierre/trees";
-import { afterEach, describe, expect, it } from "vitest";
-import { pathsForPierreTree, resetTreePaths, revealTreePath } from "./pierre-tree";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  observeTreeDirectoryExpansions,
+  pathsForPierreTree,
+  resetTreePaths,
+  revealTreePath,
+} from "./pierre-tree";
 
 const models: FileTree[] = [];
 function tree(paths: string[]): FileTree {
@@ -57,5 +62,56 @@ describe("Pierre tree workspace paths", () => {
     expect(nested !== null && "isExpanded" in nested && nested.isExpanded()).toBe(true);
     const root = model.getItem("src");
     expect(root !== null && "isExpanded" in root && root.isExpanded()).toBe(false);
+  });
+
+  it("reports expansion of genuine empty directories without eagerly loading closed ones", () => {
+    const model = tree(["empty/", "closed/nested/", "file.ts"]);
+    const onExpandDirectory = vi.fn();
+    const observer = observeTreeDirectoryExpansions(model, onExpandDirectory);
+    expect(onExpandDirectory).not.toHaveBeenCalled();
+
+    const directory = model.getItem("empty");
+    if (directory !== null && "expand" in directory) directory.expand();
+    expect(onExpandDirectory.mock.calls).toEqual([["empty"]]);
+
+    model.getItem("file.ts")?.select();
+    model.focusPath("file.ts");
+    if (directory !== null && "expand" in directory) directory.expand();
+    expect(onExpandDirectory.mock.calls).toEqual([["empty"]]);
+
+    if (directory !== null && "expand" in directory) {
+      directory.collapse();
+      directory.expand();
+    }
+    expect(onExpandDirectory.mock.calls).toEqual([["empty"], ["empty"]]);
+    observer.unsubscribe();
+  });
+
+  it("progressively reports known ancestors while revealing an unloaded active path", () => {
+    const model = tree(["src/", "closed/"]);
+    const onExpandDirectory = vi.fn();
+    const observer = observeTreeDirectoryExpansions(model, onExpandDirectory);
+    revealTreePath(model, "src/nested/index.ts");
+    expect(onExpandDirectory.mock.calls).toEqual([["src"]]);
+
+    resetTreePaths(model, ["src/", "src/nested/", "closed/"], ["src/", "closed/"]);
+    revealTreePath(model, "src/nested/index.ts");
+    expect(onExpandDirectory.mock.calls).toEqual([["src"], ["src/nested"]]);
+    observer.unsubscribe();
+  });
+
+  it("rechecks expanded directories for an invalidated listing and unsubscribes cleanly", () => {
+    const model = tree(["src/", "other/"]);
+    revealTreePath(model, "src/index.ts");
+    const onExpandDirectory = vi.fn();
+    const observer = observeTreeDirectoryExpansions(model, onExpandDirectory);
+    expect(onExpandDirectory.mock.calls).toEqual([["src"]]);
+    observer.recheck();
+    expect(onExpandDirectory.mock.calls).toEqual([["src"], ["src"]]);
+    observer.unsubscribe();
+
+    const other = model.getItem("other");
+    if (other !== null && "expand" in other) other.expand();
+    expect(onExpandDirectory).toHaveBeenCalledTimes(2);
   });
 });

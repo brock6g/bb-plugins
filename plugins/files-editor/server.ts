@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -10,7 +10,8 @@ import {
 import { z } from "zod";
 import type { FlatEntry } from "./lib/tree.js";
 import { rankEntries } from "./lib/tree.js";
-import { resolveWithinRoot } from "./lib/paths.js";
+import { pathApiFor, resolveWithinRoot } from "./lib/paths.js";
+import { decodeFolderScope, encodeFolderScope } from "./lib/folder-scope.js";
 import {
   parseExcludedNames,
   shouldFallBackToBbListing,
@@ -33,6 +34,7 @@ import {
 /** BB's own recursive listing is capped at 10k; the local walk gets more room. */
 const LOCAL_ENTRY_LIMIT = 40_000;
 const REMOTE_ENTRY_LIMIT = 10_000;
+const FOLDER_ENTRY_LIMIT = 10_000;
 
 /** Keep the existing editable-file size limit for bounded model and RPC costs. */
 const MAX_EDITABLE_BYTES = 4 * 1024 * 1024;
@@ -48,7 +50,7 @@ const CHANGED_CHANNEL = "files-editor/changed";
 
 const scopeSchema = z
   .object({
-    kind: z.enum(["thread", "environment", "project"]),
+    kind: z.enum(["thread", "environment", "project", "folder"]),
     id: z.string().min(1),
   })
   .strict();
@@ -75,7 +77,7 @@ const resolvedScopeSchema = z.object({
   isLocal: z.boolean(),
   label: z.string(),
   sublabel: z.string(),
-  projectId: z.string(),
+  projectId: z.string().nullable(),
   environmentId: z.string().nullable(),
   ref: scopeSchema,
 });
@@ -113,6 +115,27 @@ const searchOutcomeSchema = z.discriminatedUnion("status", [
 export type SearchResult = z.infer<typeof searchOutcomeSchema>;
 
 export const rpcContract = defineRpcContract({
+  machines: {
+    input: z.null(),
+    output: z.object({
+      machines: z.array(z.object({
+        id: z.string(),
+        name: z.string(),
+        isLocal: z.boolean(),
+        connected: z.boolean(),
+        platform: z.string().optional(),
+      })),
+      defaultHostId: z.string().nullable(),
+    }),
+  },
+  openFolder: {
+    input: z.object({ hostId: z.string().min(1), path: z.string().min(1) }).strict(),
+    output: z.object({ scope: resolvedScopeSchema }),
+  },
+  directory: {
+    input: z.object({ scope: scopeSchema, path: z.string(), includeHidden: z.boolean() }).strict(),
+    output: z.object({ entries: z.array(entrySchema), truncated: z.boolean() }),
+  },
   workspaces: {
     input: z.null(),
     output: z.object({
@@ -175,6 +198,8 @@ export const rpcContract = defineRpcContract({
         wholeWord: z.boolean(),
         regex: z.boolean(),
         includeHidden: z.boolean(),
+        /** Folder search only considers files the browser has already loaded. */
+        paths: z.array(z.string().min(1)).max(40_000).optional(),
       })
       .strict(),
     output: searchOutcomeSchema,
@@ -273,6 +298,35 @@ export default function plugin(bb: BbPluginApi) {
     }
   }
 
+  async function resolveFolder(
+    hostId: string,
+    requestedRoot: string,
+    preserveRoot = false,
+  ): Promise<ResolvedScope> {
+    assertAbsoluteDirectory(requestedRoot);
+    const [host, listed, local] = await Promise.all([
+      bb.sdk.hosts.get({ hostId }),
+      bb.sdk.hosts.directory({ hostId, path: requestedRoot }),
+      localHostId(),
+    ]);
+    assertAbsoluteDirectory(listed.directory);
+    const root = pathApiFor(listed.directory).normalize(listed.directory);
+    if (preserveRoot && !sameDirectory(requestedRoot, root)) {
+      throw new Error("The folder root has changed. Open the folder again.");
+    }
+    return {
+      root,
+      hostId,
+      hostName: host.name,
+      isLocal: hostId === local,
+      label: host.name,
+      sublabel: root,
+      projectId: null,
+      environmentId: null,
+      ref: encodeFolderScope(hostId, root),
+    };
+  }
+
   /**
    * `projects.get` serves standard projects only — asking it for the singleton
    * personal project is a 404 — so fall back to the list that can include it.
@@ -304,6 +358,15 @@ export default function plugin(bb: BbPluginApi) {
   async function resolveScope(
     scope: Scope,
   ): Promise<{ ok: true; scope: ResolvedScope } | { ok: false; reason: string }> {
+    if (scope.kind === "folder") {
+      const location = decodeFolderScope(scope.id);
+      if (location === null) return { ok: false, reason: "Invalid folder reference." };
+      try {
+        return { ok: true, scope: await resolveFolder(location.hostId, location.root, true) };
+      } catch (error) {
+        return { ok: false, reason: describe(error) };
+      }
+    }
     let environmentId: string | null = null;
     let projectId: string | null = null;
 
@@ -379,6 +442,10 @@ export default function plugin(bb: BbPluginApi) {
     truncated: boolean;
     listing: "local" | "remote";
   }> {
+    if (scope.ref.kind === "folder") {
+      const listed = await listFolderDirectory(scope, "", includeHidden);
+      return { ...listed, listing: scope.isLocal ? "local" : "remote" };
+    }
     const excluded = await excludedNames();
 
     if (scope.isLocal) {
@@ -416,8 +483,62 @@ export default function plugin(bb: BbPluginApi) {
     return { entries, truncated: result.truncated, listing: "remote" };
   }
 
+  async function listFolderDirectory(
+    scope: ResolvedScope,
+    relativePath: string,
+    includeHidden: boolean,
+  ): Promise<{ entries: FlatEntry[]; truncated: boolean }> {
+    const api = pathApiFor(scope.root);
+    const absolutePath = folderPath(scope.root, relativePath);
+    const prefix = api.relative(scope.root, absolutePath).split(api.sep).join("/");
+    const excluded = await excludedNames();
+    if (!visibleFolderPath(prefix, excluded, includeHidden)) return { entries: [], truncated: false };
+
+    let children: Array<{ name: string; kind: "file" | "directory" }>;
+    if (scope.isLocal) {
+      const canonical = await realpath(absolutePath);
+      assertWithinFolder(scope.root, canonical);
+      if (!sameDirectory(absolutePath, canonical)) throw new Error("Symbolic-link directories cannot be browsed.");
+      const dirents = await readdir(canonical, { withFileTypes: true });
+      children = dirents.flatMap((entry) =>
+        entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())
+          ? []
+          : [{ name: entry.name, kind: entry.isDirectory() ? "directory" as const : "file" as const }],
+      );
+    } else {
+      const listed = await bb.sdk.hosts.directory({ hostId: scope.hostId, path: absolutePath });
+      assertWithinFolder(scope.root, listed.directory);
+      if (!sameDirectory(absolutePath, listed.directory)) throw new Error("Symbolic-link directories cannot be browsed.");
+      children = listed.entries.filter((entry) => {
+        if (entry.name === "" || entry.name === "." || entry.name === ".." || entry.name.includes("\0")) return false;
+        if (entry.name.includes("/") || (api === path.win32 && entry.name.includes("\\"))) return false;
+        return api.isAbsolute(entry.path) && sameDirectory(entry.path, api.join(listed.directory, entry.name));
+      });
+    }
+
+    const entries: FlatEntry[] = [];
+    let truncated = false;
+    for (const child of children) {
+      const childPath = prefix === "" ? child.name : `${prefix}/${child.name}`;
+      if (!visibleFolderPath(childPath, excluded, includeHidden)) continue;
+      if (entries.length === FOLDER_ENTRY_LIMIT) {
+        truncated = true;
+        break;
+      }
+      entries.push({ path: childPath, kind: child.kind });
+    }
+    entries.sort((left, right) =>
+      left.kind === right.kind
+        ? left.path.localeCompare(right.path, undefined, { numeric: true })
+        : left.kind === "directory" ? -1 : 1,
+    );
+    return { entries, truncated };
+  }
+
   async function readWorkspaceFile(scope: ResolvedScope, relativePath: string) {
-    const absolutePath = resolveWithinRoot(scope.root, relativePath);
+    const absolutePath = scope.ref.kind === "folder"
+      ? folderPath(scope.root, relativePath)
+      : resolveWithinRoot(scope.root, relativePath);
     const file = await bb.sdk.files.read({
       hostId: scope.hostId,
       path: absolutePath,
@@ -531,7 +652,19 @@ export default function plugin(bb: BbPluginApi) {
   async function listSearchPaths(
     scope: ResolvedScope,
     includeHidden: boolean,
+    loadedPaths?: string[],
   ): Promise<{ paths: string[]; truncated: boolean }> {
+    if (scope.ref.kind === "folder") {
+      const excluded = await excludedNames();
+      const api = pathApiFor(scope.root);
+      const paths = (loadedPaths ?? []).map((entry) => {
+        const absolute = folderPath(scope.root, entry);
+        const relative = api.relative(scope.root, absolute).split(api.sep).join("/");
+        if (relative === "") throw new Error("Search paths must name files inside the folder.");
+        return relative;
+      }).filter((entry) => visibleFolderPath(entry, excluded, includeHidden));
+      return { paths: [...new Set(paths)].sort((left, right) => left.localeCompare(right)), truncated: false };
+    }
     const excluded = [...(await excludedNames())].sort().join("\u0000");
     const key = `${scope.hostId}\u0000${scope.root}\u0000${includeHidden}\u0000${excluded}`;
     const cached = searchListings.get(key);
@@ -556,6 +689,30 @@ export default function plugin(bb: BbPluginApi) {
   }
 
   bb.rpc.register(rpcContract, {
+    async machines() {
+      const [hosts, local] = await Promise.all([bb.sdk.hosts.list(), localHostId()]);
+      const machines = hosts.map((host) => ({
+        id: host.id,
+        name: host.name,
+        isLocal: host.id === local,
+        connected: host.status === "connected",
+      }));
+      const defaultMachine = machines.find((host) => host.isLocal && host.connected)
+        ?? machines.find((host) => host.connected);
+      return { machines, defaultHostId: defaultMachine?.id ?? null };
+    },
+
+    async openFolder({ hostId, path: requestedRoot }) {
+      return { scope: await resolveFolder(hostId, requestedRoot) };
+    },
+
+    async directory({ scope, path: relativePath, includeHidden }) {
+      if (scope.kind !== "folder") throw new Error("Directory browsing requires a folder scope.");
+      const resolved = await resolveScope(scope);
+      if (!resolved.ok) throw new Error(resolved.reason);
+      return listFolderDirectory(resolved.scope, relativePath, includeHidden);
+    },
+
     async workspaces() {
       // One request gives every project, its checkouts, and the environments
       // its threads run in — which is where a worktree's branch name lives.
@@ -606,7 +763,7 @@ export default function plugin(bb: BbPluginApi) {
       };
     },
 
-    async searchText({ scope, query, matchCase, wholeWord, regex, includeHidden }) {
+    async searchText({ scope, query, matchCase, wholeWord, regex, includeHidden, paths }) {
       const resolved = await resolveScope(scope);
       if (!resolved.ok) return { status: "error" as const, message: resolved.reason };
       const target = resolved.scope;
@@ -616,14 +773,16 @@ export default function plugin(bb: BbPluginApi) {
       const controller = new AbortController();
       runningSearches.set(key, controller);
 
-      const list = () => listSearchPaths(target, includeHidden);
-      const source = target.isLocal
+      const list = () => listSearchPaths(target, includeHidden, paths);
+      const source = target.isLocal && target.ref.kind !== "folder"
         ? createLocalSource({ root: target.root, list, cache: localTexts })
         : createRemoteSource({
             root: target.root,
             hostId: target.hostId,
             list,
-            cache: remoteTexts,
+            // Folder paths come from the browser; each search must reapply BB's
+            // rootPath checks, even on the local host or after a symlink changes.
+            cache: target.ref.kind === "folder" ? new RemoteTextCache() : remoteTexts,
             async readRemote(absolutePath) {
               const file = await bb.sdk.files.read({
                 hostId: target.hostId,
@@ -685,7 +844,9 @@ export default function plugin(bb: BbPluginApi) {
       const resolved = await resolveScope(scope);
       if (!resolved.ok) throw new Error(resolved.reason);
 
-      const absolutePath = resolveWithinRoot(resolved.scope.root, relativePath);
+      const absolutePath = resolved.scope.ref.kind === "folder"
+        ? folderPath(resolved.scope.root, relativePath)
+        : resolveWithinRoot(resolved.scope.root, relativePath);
       const result = await bb.sdk.files.write({
         hostId: resolved.scope.hostId,
         path: absolutePath,
@@ -868,6 +1029,38 @@ export default function plugin(bb: BbPluginApi) {
 
 function isExcluded(entryPath: string, excluded: ReadonlySet<string>): boolean {
   return entryPath.split("/").some((segment) => excluded.has(segment));
+}
+
+function assertAbsoluteDirectory(directory: string): void {
+  if (directory.includes("\0") || !pathApiFor(directory).isAbsolute(directory)) {
+    throw new Error("Folder path must be absolute.");
+  }
+}
+
+function sameDirectory(left: string, right: string): boolean {
+  const api = pathApiFor(left);
+  return api === pathApiFor(right) && api.relative(left, right) === "";
+}
+
+function assertWithinFolder(root: string, directory: string): void {
+  assertAbsoluteDirectory(directory);
+  const api = pathApiFor(root);
+  const relative = api.relative(root, directory);
+  if (api !== pathApiFor(directory) || relative === ".." || relative.startsWith(`..${api.sep}`) || api.isAbsolute(relative)) {
+    throw new Error("Path escapes the folder root.");
+  }
+}
+
+function folderPath(root: string, relative: string): string {
+  const api = pathApiFor(root);
+  if (relative.includes("\0") || api.isAbsolute(relative) || (api === path.win32 && /^[a-zA-Z]:/.test(relative))) {
+    throw new Error("Folder paths must be relative to the selected root.");
+  }
+  return resolveWithinRoot(root, relative);
+}
+
+function visibleFolderPath(relative: string, excluded: ReadonlySet<string>, includeHidden: boolean): boolean {
+  return !isExcluded(relative, excluded) && (includeHidden || !relative.split("/").some((segment) => segment.startsWith(".")));
 }
 
 function describe(error: unknown): string {
