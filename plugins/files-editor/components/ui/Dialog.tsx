@@ -34,7 +34,7 @@ export function Dialog({ title, onClose, children }: {
     >
       <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
         <h2 id={titleId} className="text-sm font-medium">{title}</h2>
-        <button type="button" aria-label={`Close ${title.toLowerCase()}`} onClick={onClose} className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring">
+        <button type="button" aria-label={`Close ${title.toLowerCase()}`} onClick={onClose} className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover hover:text-foreground focus-visible:outline-none focus-visible:bg-state-hover">
           <Icon name="X" aria-hidden className="size-4" />
         </button>
       </div>

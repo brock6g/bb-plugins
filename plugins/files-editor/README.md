@@ -55,9 +55,11 @@ visible, and when you return to the window. Unsaved drafts are preserved.
 ## Open a server folder
 
 On the sidebar **Files** page, select **Open folder on a machine** beside the
-project and workspace pickers. Choose a machine, enter an absolute path, and
-select **Open folder**. Use `/` for a Linux or macOS filesystem root, or a path
-such as `C:\Users` on Windows.
+project and workspace pickers. Choose a machine, then select **Browse filesystem**
+to start at its root folder. No path is needed.
+
+To open a folder directly, expand **Open a specific folder**, enter an absolute
+path such as `/etc` or `C:\Users`, and select **Open folder**.
 
 Directories load as you expand them. **Search loaded files** and **Go to file**
 cover files in folders you have loaded, so opening `/` does not scan the entire

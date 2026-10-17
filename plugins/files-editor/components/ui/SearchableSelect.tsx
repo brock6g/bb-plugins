@@ -93,8 +93,8 @@ export function SearchableSelect({
             }
           }}
           className={cn(
-            "flex min-h-7 w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-start text-xs text-foreground",
-            "hover:bg-state-hover focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+            "flex min-h-8 w-full min-w-0 items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-start text-xs text-foreground",
+            "hover:bg-state-hover focus-visible:outline-none focus-visible:bg-state-hover",
             "disabled:cursor-default disabled:text-muted-foreground",
           )}
         >
@@ -166,7 +166,7 @@ export function SearchableSelect({
                   : (activeIndex + (event.key === "ArrowDown" ? 1 : -1) + filtered.length) % filtered.length;
                 setActiveValue(filtered[nextIndex]?.value ?? null);
               }}
-              className="min-h-10 w-full min-w-0 rounded-sm bg-transparent text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [@media(pointer:coarse)]:text-base"
+              className="min-h-10 w-full min-w-0 rounded-sm bg-transparent text-sm placeholder:text-muted-foreground focus-visible:outline-none [@media(pointer:coarse)]:text-base"
             />
           </div>
           <div id={listId} role="listbox" aria-label={label} className="min-h-0 overflow-y-auto overscroll-contain p-1">
