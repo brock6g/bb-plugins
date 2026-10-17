@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { createElement } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { WorkspacePicker } from "../components/WorkspacePicker";
 import { SearchableSelect } from "../components/ui/SearchableSelect";
 import type { ResolvedScope, WorkspaceOption } from "../server";
+import { encodeFolderScope } from "./folder-scope";
 
 const { call, rpc } = vi.hoisted(() => {
   const call = vi.fn();
@@ -112,6 +113,7 @@ describe("searchable select", () => {
     const dialog = screen.getByRole("dialog", { name: "Open folder" });
     fireEvent.click(within(dialog).getByRole("button", { name: "Machine" }));
     const menu = within(dialog).getByRole("dialog", { name: "Machine options" });
+    expect(menu.getAttribute("data-bb-plugin")).toBe("files-editor");
     expect(menu.style.maxHeight).toContain("--radix-popover-content-available-height");
     expect(menu.style.maxWidth).toContain("100dvw - 16px");
     expect(within(dialog).getByRole("listbox").className).toContain("overscroll-contain");
@@ -146,7 +148,7 @@ describe("workspace picker", () => {
     const view = render(createElement(WorkspacePicker, { current: null, onSelect: vi.fn() }));
     await waitFor(() => expect(call).toHaveBeenCalledWith("workspaces"));
     expect(view.container.querySelector("select")).toBeNull();
-    expect(screen.getByRole("button", { name: "Project" })).toBeDefined();
+    expect(screen.getByRole("button", { name: "Location" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Workspace" })).toBeDefined();
   });
 
@@ -154,7 +156,7 @@ describe("workspace picker", () => {
     call.mockResolvedValue({ workspaces });
     const onSelect = vi.fn();
     render(createElement(WorkspacePicker, { current, onSelect }));
-    const project = screen.getByRole("button", { name: "Project" }) as HTMLButtonElement;
+    const project = screen.getByRole("button", { name: "Location" }) as HTMLButtonElement;
     await waitFor(() => expect(project.disabled).toBe(false));
     fireEvent.click(project);
     fireEvent.click(screen.getByRole("option", { name: "Beta" }));
@@ -168,7 +170,7 @@ describe("workspace picker", () => {
     call.mockResolvedValue({ workspaces: [] });
     const thread: ResolvedScope = { ...current, ref: { kind: "thread", id: "unlisted" }, projectId: "unlisted-project", label: "Archived project", sublabel: "Thread checkout" };
     render(createElement(WorkspacePicker, { current: thread, onSelect: vi.fn() }));
-    const project = screen.getByRole("button", { name: "Project" }) as HTMLButtonElement;
+    const project = screen.getByRole("button", { name: "Location" }) as HTMLButtonElement;
     await waitFor(() => expect(project.disabled).toBe(false));
     expect(project.title).toBe("Archived project");
     const workspace = screen.getByRole("button", { name: "Workspace" });
@@ -186,13 +188,10 @@ describe("workspace picker", () => {
     };
     const onSelect = vi.fn();
     render(createElement(WorkspacePicker, { current: folder, onSelect }));
-    const project = screen.getByRole("button", { name: "Project" }) as HTMLButtonElement;
+    const project = screen.getByRole("button", { name: "Location" }) as HTMLButtonElement;
     await waitFor(() => expect(project.disabled).toBe(false));
-    expect(project.textContent).toBe("Choose a project…");
-    const workspace = screen.getByRole("button", { name: "Workspace" }) as HTMLButtonElement;
-    expect(workspace.disabled).toBe(true);
-    expect(workspace.title).toBe(folder.root);
-    expect(workspace.textContent).toBe(folder.root);
+    expect(project.textContent).toBe(folder.root);
+    expect(screen.queryByRole("button", { name: "Workspace" })).toBeNull();
     fireEvent.click(project);
     fireEvent.click(screen.getByRole("option", { name: "Beta" }));
     expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: "project", id: "b" });
@@ -202,11 +201,11 @@ describe("workspace picker", () => {
     let reject!: (error: Error) => void;
     call.mockReturnValueOnce(new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
     render(createElement(WorkspacePicker, { current: null, onSelect: vi.fn() }));
-    const project = screen.getByRole("button", { name: "Project" }) as HTMLButtonElement;
+    const project = screen.getByRole("button", { name: "Location" }) as HTMLButtonElement;
     const workspace = screen.getByRole("button", { name: "Workspace" }) as HTMLButtonElement;
     expect(project.disabled).toBe(true);
     expect(workspace.disabled).toBe(true);
-    expect(project.textContent).toBe("Loading projects…");
+    expect(project.textContent).toBe("Loading locations…");
     reject(new Error("offline"));
     expect((await screen.findByRole("alert")).textContent).toContain("Couldn’t load");
     expect(project.disabled).toBe(true);
@@ -217,5 +216,94 @@ describe("workspace picker", () => {
     expect(call).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("alert")).toBeNull();
     expect(workspace.disabled).toBe(true);
+  });
+
+  it("opens the actual server root from the location menu without a folder dialog", async () => {
+    const root = encodeFolderScope("server", "/");
+    call.mockImplementation(async (method) => {
+      if (method === "workspaces") return { workspaces };
+      if (method === "machines") return { defaultHostId: "server" };
+      if (method === "openFolder") return { scope: { ref: root } };
+      throw new Error(`Unexpected RPC: ${method}`);
+    });
+    const onSelect = vi.fn();
+    render(createElement(WorkspacePicker, { current, onSelect }));
+    const location = screen.getByRole<HTMLButtonElement>("button", { name: "Location" });
+    await waitFor(() => expect(location.disabled).toBe(false));
+    fireEvent.click(location);
+    fireEvent.click(screen.getByRole("option", { name: "Server root Not a project" }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledExactlyOnceWith(root));
+    expect(call).toHaveBeenCalledWith("openFolder", { hostId: "server", path: "/" });
+    expect(screen.queryByRole("textbox", { name: "Folder path" })).toBeNull();
+  });
+
+  it("shows the root as the current location and labels it as a non-project option", async () => {
+    call.mockResolvedValue({ workspaces });
+    const folder: ResolvedScope = { ...current, root: "/", projectId: null, environmentId: null, ref: encodeFolderScope("local", "/") };
+    render(createElement(WorkspacePicker, { current: folder, onSelect: vi.fn() }));
+    const location = screen.getByRole<HTMLButtonElement>("button", { name: "Location" });
+    await waitFor(() => expect(location.disabled).toBe(false));
+    expect(location.textContent).toBe("Server root");
+    expect(screen.queryByRole("button", { name: "Workspace" })).toBeNull();
+    fireEvent.click(location);
+    expect(screen.getByRole("option", { name: "Server root Not a project" }).getAttribute("aria-selected")).toBe("true");
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "not a project" } });
+    expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("keeps project choices available if opening the root fails, and supports retry", async () => {
+    const root = encodeFolderScope("server", "/");
+    let failures = 1;
+    call.mockImplementation(async (method) => {
+      if (method === "workspaces") return { workspaces };
+      if (method === "machines") return { defaultHostId: "server" };
+      if (method === "openFolder") {
+        if (failures-- > 0) throw new Error("Machine disconnected");
+        return { scope: { ref: root } };
+      }
+      throw new Error(`Unexpected RPC: ${method}`);
+    });
+    const onSelect = vi.fn();
+    render(createElement(WorkspacePicker, { current, onSelect }));
+    const location = screen.getByRole<HTMLButtonElement>("button", { name: "Location" });
+    await waitFor(() => expect(location.disabled).toBe(false));
+    fireEvent.click(location);
+    fireEvent.click(screen.getByRole("option", { name: "Server root Not a project" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("Machine disconnected");
+    expect(location.disabled).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledExactlyOnceWith(root));
+  });
+
+  it("reports when there is no connected machine without opening a folder", async () => {
+    call.mockImplementation(async (method) => method === "workspaces" ? { workspaces } : { defaultHostId: null });
+    const onSelect = vi.fn();
+    render(createElement(WorkspacePicker, { current, onSelect }));
+    const location = screen.getByRole<HTMLButtonElement>("button", { name: "Location" });
+    await waitFor(() => expect(location.disabled).toBe(false));
+    fireEvent.click(location);
+    fireEvent.click(screen.getByRole("option", { name: "Server root Not a project" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("No connected machines");
+    expect(call.mock.calls.some(([method]) => method === "openFolder")).toBe(false);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate if the root request completes after unmount", async () => {
+    let resolve!: (value: unknown) => void;
+    call.mockImplementation(async (method) => {
+      if (method === "workspaces") return { workspaces };
+      if (method === "machines") return { defaultHostId: "server" };
+      return new Promise((yes) => { resolve = yes; });
+    });
+    const onSelect = vi.fn();
+    const view = render(createElement(WorkspacePicker, { current, onSelect }));
+    const location = screen.getByRole<HTMLButtonElement>("button", { name: "Location" });
+    await waitFor(() => expect(location.disabled).toBe(false));
+    fireEvent.click(location);
+    fireEvent.click(screen.getByRole("option", { name: "Server root Not a project" }));
+    await waitFor(() => expect(resolve).toBeTypeOf("function"));
+    view.unmount();
+    await act(async () => resolve({ scope: { ref: encodeFolderScope("server", "/") } }));
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

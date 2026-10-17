@@ -7,6 +7,8 @@ export interface SearchableSelectOption {
   value: string;
   label: string;
   description?: string;
+  meta?: string;
+  icon?: IconName;
 }
 
 export interface SearchableSelectProps {
@@ -41,7 +43,7 @@ export function SearchableSelect({
   const selected = options.find((option) => option.value === value);
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = options.filter((option) =>
-    `${option.label} ${option.description ?? ""}`.toLocaleLowerCase().includes(normalizedQuery),
+    `${option.label} ${option.description ?? ""} ${option.meta ?? ""}`.toLocaleLowerCase().includes(normalizedQuery),
   );
   const activeIndex = Math.max(0, filtered.findIndex((option) => option.value === activeValue));
   const activeOptionId = filtered[activeIndex] === undefined ? undefined : `${id}-option-${activeIndex}`;
@@ -111,6 +113,7 @@ export function SearchableSelect({
           collisionPadding={8}
           sticky="always"
           aria-label={`${label} options`}
+          data-bb-plugin="files-editor"
           onOpenAutoFocus={(event) => {
             event.preventDefault();
             inputRef.current?.focus();
@@ -126,7 +129,7 @@ export function SearchableSelect({
             maxHeight: "min(20rem, var(--radix-popover-content-available-height))",
           }}
         >
-          <div className="flex shrink-0 items-center gap-2 border-b border-border px-2">
+          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border px-2">
             <Icon name="Search" aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
             <input
               ref={inputRef}
@@ -166,7 +169,7 @@ export function SearchableSelect({
                   : (activeIndex + (event.key === "ArrowDown" ? 1 : -1) + filtered.length) % filtered.length;
                 setActiveValue(filtered[nextIndex]?.value ?? null);
               }}
-              className="min-h-10 w-full min-w-0 rounded-sm bg-transparent text-sm placeholder:text-muted-foreground focus-visible:outline-none [@media(pointer:coarse)]:text-base"
+              className="min-h-11 w-full min-w-0 rounded-sm bg-transparent py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none [@media(pointer:coarse)]:text-base"
             />
           </div>
           <div id={listId} role="listbox" aria-label={label} className="min-h-0 overflow-y-auto overscroll-contain p-1">
@@ -183,14 +186,16 @@ export function SearchableSelect({
                 onClick={() => select(option.value)}
                 title={option.description ? `${option.label}\n${option.description}` : option.label}
                 className={cn(
-                  "flex min-h-8 cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-xs",
+                  "flex min-h-6 cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-xs [@media(pointer:coarse)]:min-h-8",
                   index === activeIndex && "bg-state-hover text-foreground",
                 )}
               >
+                {option.icon ? <Icon name={option.icon} aria-hidden className="size-3.5 shrink-0 text-muted-foreground" /> : null}
                 <div className="min-w-0 flex-1">
                   <div className="break-words [overflow-wrap:anywhere]">{option.label}</div>
                   {option.description ? <div className="break-words text-muted-foreground [overflow-wrap:anywhere]">{option.description}</div> : null}
                 </div>
+                {option.meta ? <span className="shrink-0 text-muted-foreground">{option.meta}</span> : null}
                 {option.value === value ? <Icon name="Check" aria-hidden className="size-3.5 shrink-0" /> : null}
               </div>
             ))}

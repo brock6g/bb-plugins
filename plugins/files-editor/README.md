@@ -54,11 +54,11 @@ visible, and when you return to the window. Unsaved drafts are preserved.
 
 ## Open a server folder
 
-On the sidebar **Files** page, select **Open folder on a machine** beside the
-project and workspace pickers. Choose a machine, then select **Browse filesystem**
-to start at its root folder. No path is needed.
+On the sidebar **Files** page, choose **Server root** from the **Location** menu.
+It is labelled **Not a project** and opens the server’s filesystem directly.
 
-To open a folder directly, expand **Open a specific folder**, enter an absolute
+For another machine or folder, select **Open folder on a machine** beside the
+picker. Choose a machine, expand **Open a specific folder**, enter an absolute
 path such as `/etc` or `C:\Users`, and select **Open folder**.
 
 Directories load as you expand them. **Search loaded files** and **Go to file**
@@ -66,7 +66,7 @@ cover files in folders you have loaded, so opening `/` does not scan the entire
 disk. **Refresh files** refreshes the root and folders you have already loaded.
 File saves keep the same conflict checks as project files.
 
-The Project and Workspace pickers have searchable, scrollable menus that stay
+The Location and Workspace pickers have searchable, scrollable menus that stay
 inside the viewport. Use the arrow keys to move through results, **Enter** to
 select, and **Escape** to close. Long project and branch names wrap in the menu.
 
